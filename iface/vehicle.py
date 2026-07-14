@@ -163,13 +163,13 @@ class SW8(Vehicle):
     @property
     def tinv(self) -> List[bool]:
         tinv = [
-            True,           # Thruster 1
+            False,           # Thruster 1
             True,           # Thruster 2
-            False,          # Thruster 3
+            True,          # Thruster 3
             False,          # Thruster 4
             True,           # Thruster 5
             False,          # Thruster 6
-            False,          # Thruster 7
+            True,          # Thruster 7
             True            # Thruster 8
         ]
         return tinv
@@ -180,9 +180,9 @@ class SW8(Vehicle):
             0.7071,         # x
             0.7071,         # y
             1.0,            # z
-            0.4413,         # xrot
+            0.302,          # xrot
             1.0,            # yrot
-            0.8139          # zrot
+            0.446           # zrot
         ]
         return reldof
 
