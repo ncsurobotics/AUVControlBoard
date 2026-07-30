@@ -1,3 +1,8 @@
 ./.vscode/
 core.[0-9]*
 package/build/
+/result
+/result-lib
+.direnv
+/.pre-commit-config.yaml
+/target

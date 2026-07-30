@@ -1,0 +1,15 @@
+[package]
+authors = ["AquaPack Robotics <aquapack@aquapackrobotics.org>"]
+edition = "2021"
+# If you change the name here, you must also do it in flake.nix (and run `cargo generate-lockfile` afterwards)
+name = "auv_control_board"
+description = "Communication library for AUVControlBoard"
+version = "1.1.0"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+rerun = "0.35.0"
+tokio = { version = "1.53.1", features = ["full", "tracing"] }
+tokio-util = "0.7.19"
+tracing = "0.1.44"
