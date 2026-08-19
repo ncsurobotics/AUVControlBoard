@@ -7,12 +7,6 @@ use thiserror::Error;
 /// An error occuring trying to communicate with the control board.
 #[derive(Error, Debug)]
 pub enum ControlBoardError {
-    /// Tried passing a malformed [vehicle definition](super::vehicle::Definition).
-    ///
-    /// The number of thrusters in the [motor matrix](super::vehicle::MotorMatrix) and [thruster inversions vector](super::vehicle::ThrusterInversions) do not match.
-    #[error("number of motor matrix rows and number of thruster inversions do not match: {rows:?} rows, {inversions:?} inversions")]
-    ThrusterMismatch { rows: u8, inversions: usize },
-
     /// Tried passing a thruster index outside of the supported range, 1-8 inclusive.
     #[error("thruster index '{0}' is outside of the allowed range 1-8")]
     ThrusterIndexing(u8),
