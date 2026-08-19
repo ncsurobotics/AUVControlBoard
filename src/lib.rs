@@ -3,41 +3,29 @@
 //! # Example Usage:
 //!
 //! ```
-//! // TODO: Macro this
-//! // motor_matrix! [
-//! //   0.0, 0.0, 0.0, 0.0, 0.0, 0.0;
-//! //   0.0, 0.0, 0.0, 0.0, 0.0, 0.0;
-//! //   0.0, 0.0, 0.0, 0.0, 0.0, 0.0;
-//! //   0.0, 0.0, 0.0, 0.0, 0.0, 0.0;
-//! //   0.0, 0.0, 0.0, 0.0, 0.0, 0.0;
-//! //   0.0, 0.0, 0.0, 0.0, 0.0, 0.0;
-//! //   0.0, 0.0, 0.0, 0.0, 0.0, 0.0;
-//! //   0.0, 0.0, 0.0, 0.0, 0.0, 0.0;
-//! // ]
-//! let motor_matrix = MotorMatrix::builder(8)
-//!   .set_row(1, [0.0, 0.0, 0.0, 0.0, 0.0, 0.0].into())
-//!   .set_row(2, [0.0, 0.0, 0.0, 0.0, 0.0, 0.0].into())
-//!   .set_row(3, [0.0, 0.0, 0.0, 0.0, 0.0, 0.0].into())
-//!   .set_row(4, [0.0, 0.0, 0.0, 0.0, 0.0, 0.0].into())
-//!   .set_row(5, [0.0, 0.0, 0.0, 0.0, 0.0, 0.0].into())
-//!   .set_row(6, [0.0, 0.0, 0.0, 0.0, 0.0, 0.0].into())
-//!   .set_row(7, [0.0, 0.0, 0.0, 0.0, 0.0, 0.0].into())
-//!   .set_row(8, [0.0, 0.0, 0.0, 0.0, 0.0, 0.0].into())
-//!   .build();
+//! use auv_control_board::{motor_matrix, pid_axes, vehicle::Definition};
 //!
-//! let vehicle_def = VehicleDefinition::new(
-//!   motor_matrix,
-//!   [true, true, false, false, true, false, false, true].into(),
-//!   [0.7071, 0.7071, 1.0, 0.4413, 1.0, 0.8139],
-//!   [
-//!     ('X', 0.8, 0.0, 0.0, 0.6, false).into(),
-//!     ('Y', 2.0, 0.0, 0.0, 0.1, false).into(),
-//!     ('Z', 4.0, 0.0, 0.0, 1.0, false).into(),
-//!     ('D', 1.5, 0.0, 0.0, 1.0, false).into(),
-//!   ],
-//! )?;
+//! const VEHICLE_DEFINITION: Definition<8> = Definition::new(
+//!     motor_matrix! [
+//!         0.0, 0.0, 0.0, 0.0, 0.0, 0.0, false;
+//!         0.0, 0.0, 0.0, 0.0, 0.0, 0.0, false;
+//!         0.0, 0.0, 0.0, 0.0, 0.0, 0.0, false;
+//!         0.0, 0.0, 0.0, 0.0, 0.0, 0.0, false;
+//!         0.0, 0.0, 0.0, 0.0, 0.0, 0.0, false;
+//!         0.0, 0.0, 0.0, 0.0, 0.0, 0.0, false;
+//!         0.0, 0.0, 0.0, 0.0, 0.0, 0.0, false;
+//!         0.0, 0.0, 0.0, 0.0, 0.0, 0.0, false;
+//!     ],
+//!     [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+//!     pid_axes! [
+//!         X, 0.0, 0.0, 0.0, 0.0, false;
+//!         X, 0.0, 0.0, 0.0, 0.0, false;
+//!         X, 0.0, 0.0, 0.0, 0.0, false;
+//!         X, 0.0, 0.0, 0.0, 0.0, false;
+//!     ],
+//! );
 //!
-//! let board = ControlBoard::serial(config.control_board_path.as_str(), &vehicle_def).await;
+//! let board = ControlBoard::serial("/dev/ttyACM0", &VEHICLE_DEFINITION).await;
 //! ```
 
 mod interface;

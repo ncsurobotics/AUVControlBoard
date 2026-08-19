@@ -13,6 +13,8 @@ bytes = "1.12.1"
 derive-getters = "0.5.0"
 futures = { version = "0.3.33", default-features = false, features = ["std"] }
 rerun = "0.35.0"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_with = "3.22.0"
 thiserror = "2.0.19"
 tokio = { version = "1.53.1", features = ["full", "tracing"] }
 tokio-serial = "5.5.0"

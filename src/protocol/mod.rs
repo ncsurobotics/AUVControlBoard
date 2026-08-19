@@ -98,7 +98,7 @@ impl<T: AsyncWriteExt + Unpin, U: GetAck> AUVControlBoard<T, U> {
                 .into_iter()
                 .chain(message.iter().cloned())
                 // Add CRC
-                .chain(crc_itt16_false(&id_and_body).to_be_bytes().into_iter())
+                .chain(crc_itt16_false(&id_and_body).to_be_bytes())
                 .flat_map(add_escape),
         );
         formatted_message.push(END_BYTE);

@@ -19,14 +19,14 @@ use tracing::warn;
 use self::{
     response::ResponseMap,
     util::{Angles, BNO055AxisConfig, ControlBoardError, Result},
-    vehicle_definition::{MotorMatrix, PidAxes, VehicleDefinition},
+    vehicle::{Definition, MotorMatrix, PidAxes},
 };
 
 use crate::protocol::{AUVControlBoard, MessageId};
 
 pub mod response;
 pub mod util;
-pub mod vehicle_definition;
+pub mod vehicle;
 
 /// Status of the control board's sensors
 pub enum SensorStatuses {
@@ -59,11 +59,11 @@ impl<T: AsyncWriteExt + Unpin> Deref for ControlBoard<T> {
 }
 
 impl<T: 'static + AsyncWriteExt + Unpin + Send> ControlBoard<T> {
-    pub async fn new<U>(
+    pub async fn new<U, const N: usize>(
         comm_out: T,
         comm_in: U,
         msg_id: Option<MessageId>,
-        vehicle_defintion: &VehicleDefinition,
+        vehicle_defintion: &Definition<N>,
     ) -> Result<Self>
     where
         U: 'static + AsyncRead + Unpin + Send,
@@ -76,7 +76,7 @@ impl<T: 'static + AsyncWriteExt + Unpin + Send> ControlBoard<T> {
         };
 
         this.init_matrices(&vehicle_defintion.motor_matrix).await?;
-        this.thruster_inversion_set(&vehicle_defintion.thruster_inversions)
+        this.thruster_inversion_set(&vehicle_defintion.motor_matrix)
             .await?;
         this.relative_dof_speed_set_batch(&vehicle_defintion.dof_speeds)
             .await?;
@@ -119,13 +119,18 @@ impl<T: 'static + AsyncWriteExt + Unpin + Send> ControlBoard<T> {
         Ok(this)
     }
 
-    async fn init_matrices(&self, motor_matrix: &MotorMatrix) -> Result<()> {
-        for (i, _row) in motor_matrix.0.iter().enumerate() {
-            // If the row is defined for the thruster, then set it
-            if let Some(row) = _row {
-                self.motor_matrix_set(i as u8, row.x, row.y, row.z, row.pitch, row.roll, row.yaw)
-                    .await?;
-            }
+    async fn init_matrices<const N: usize>(&self, motor_matrix: &MotorMatrix<N>) -> Result<()> {
+        for (i, row) in motor_matrix.rows.iter().enumerate() {
+            self.motor_matrix_set(
+                i as u8 + 1,
+                row.x,
+                row.y,
+                row.z,
+                row.pitch,
+                row.roll,
+                row.yaw,
+            )
+            .await?;
         }
 
         self.motor_matrix_update().await
@@ -148,7 +153,10 @@ impl<T: 'static + AsyncWriteExt + Unpin + Send> ControlBoard<T> {
 }
 
 impl ControlBoard<WriteHalf<SerialStream>> {
-    pub async fn serial(port_name: &str, vehicle_defintion: &VehicleDefinition) -> Result<Self> {
+    pub async fn serial<const N: usize>(
+        port_name: &str,
+        vehicle_defintion: &Definition<N>,
+    ) -> Result<Self> {
         const BAUD_RATE: u32 = 9600;
         const DATA_BITS: DataBits = DataBits::Eight;
         const PARITY: Parity = Parity::None;
@@ -166,11 +174,11 @@ impl ControlBoard<WriteHalf<SerialStream>> {
 impl ControlBoard<WriteHalf<TcpStream>> {
     /// Both connections are necessary for the simulator to run,
     /// but the one that doesn't feed forward to control board is unnecessary
-    pub async fn tcp(
+    pub async fn tcp<const N: usize>(
         host: &str,
         port: &str,
         dummy_port: String,
-        vehicle_defintion: VehicleDefinition,
+        vehicle_defintion: Definition<N>,
     ) -> Result<Self> {
         let host = host.to_string();
         let host_clone = host.clone();
@@ -235,16 +243,20 @@ impl<T: AsyncWrite + Unpin> ControlBoard<T> {
     ///
     /// # Arguments:
     /// * `inversions` - Array of invert statuses, with motor 1 at index 0
-    pub async fn thruster_inversion_set(&self, inversions: &Vec<bool>) -> Result<()> {
+    pub async fn thruster_inversion_set<const N: usize>(
+        &self,
+        motor_matrix: &MotorMatrix<N>,
+    ) -> Result<()> {
         const THRUSTER_INVERSION_SET: [u8; 4] = *b"TINV";
         let mut message = Vec::from(THRUSTER_INVERSION_SET);
 
         // bitmask to u8, may or may not outpreform mutating a single u8
         message.push(
-            inversions
+            motor_matrix
+                .rows
                 .iter()
                 .enumerate()
-                .map(|(idx, &inv)| (inv as u8) << idx)
+                .map(|(idx, motor)| (motor.inverted as u8) << idx)
                 .sum(),
         );
         self.write_out_basic(message).await
@@ -455,9 +467,9 @@ impl<T: AsyncWrite + Unpin> ControlBoard<T> {
         if status_byte & 0x10 != 0x10 {
             Ok(SensorStatuses::ImuNr)
         } else if status_byte & 0x01 != 0x01 {
-            return Ok(SensorStatuses::DepthNr);
+            Ok(SensorStatuses::DepthNr)
         } else {
-            return Ok(SensorStatuses::AllGood);
+            Ok(SensorStatuses::AllGood)
         }
     }
 
