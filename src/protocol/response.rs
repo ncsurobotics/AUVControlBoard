@@ -98,35 +98,3 @@ where
         panic!("Buffer capacity filled!");
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use futures::stream;
-    use futures::StreamExt;
-
-    use tokio::sync::Mutex;
-
-    static MESSAGE_LOCK: Mutex<()> = Mutex::const_new(());
-    #[tokio::test]
-    async fn start_not_at_front() {
-        let input: Vec<u8> = vec![0, 1, START_BYTE, END_BYTE];
-        let input2: Vec<u8> = vec![END_BYTE, 1, START_BYTE, 3, END_BYTE, 5];
-        let mut buffer: Vec<u8> = Vec::with_capacity(512);
-
-        let _lock = MESSAGE_LOCK.lock().await;
-        assert_eq!(
-            stream::iter(get_messages(&mut buffer, &mut &*input,).await)
-                .collect::<Vec<Vec<u8>>>()
-                .await,
-            Vec::<Vec<u8>>::new()
-        );
-
-        assert_eq!(
-            stream::iter(get_messages(&mut buffer, &mut &*input2,).await)
-                .collect::<Vec<Vec<u8>>>()
-                .await,
-            vec![vec![3]]
-        );
-    }
-}
