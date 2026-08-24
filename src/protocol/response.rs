@@ -3,7 +3,7 @@ use bytes::BufMut;
 use tokio::io::AsyncReadExt;
 
 use super::util::{END_BYTE, ESCAPE_BYTE, START_BYTE};
-use tracing::{info, warn};
+use tracing::{debug, warn};
 
 pub fn find_end(buffer: &[u8]) -> Option<(usize, &u8)> {
     let mut prev_escaped = false;
@@ -83,7 +83,7 @@ where
         let mut messages = Vec::new();
 
         // TODO: May need to clone
-        info!("Message: {:#?}", buffer);
+        debug!("Message: {:#?}", buffer);
 
         while let Some((end_idx, _)) = find_end(buffer) {
             if let Some(end_idx) = check_start(buffer, end_idx) {

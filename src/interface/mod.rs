@@ -4,7 +4,7 @@
 //!
 //! [AUVControlBoard]: https://github.com/ncsurobotics/AUVControlBoard
 
-use core::fmt::Debug;
+use core::fmt::{Debug, Display};
 use std::{ops::Deref, sync::Arc, time::Duration};
 
 use tokio::{
@@ -38,6 +38,17 @@ pub enum SensorStatuses {
     AllGood,
 }
 
+impl Display for SensorStatuses {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let msg = match self {
+            Self::ImuNr => "IMU not ready",
+            Self::DepthNr => "Depth sensor not ready",
+            Self::AllGood => "All good",
+        };
+        write!(f, "{msg}")
+    }
+}
+
 /// The last yaw reported by the control board
 pub static LAST_YAW: std::sync::Mutex<Option<f32>> = std::sync::Mutex::new(None);
 
@@ -63,7 +74,7 @@ impl<T: 'static + AsyncWriteExt + Unpin + Send> ControlBoard<T> {
         comm_out: T,
         comm_in: U,
         msg_id: Option<MessageId>,
-        vehicle_defintion: &Definition<N>,
+        vehicle_defintion: Definition<N>,
     ) -> Result<Self>
     where
         U: 'static + AsyncRead + Unpin + Send,
@@ -152,10 +163,23 @@ impl<T: 'static + AsyncWriteExt + Unpin + Send> ControlBoard<T> {
     }
 }
 
-impl ControlBoard<WriteHalf<SerialStream>> {
-    pub async fn serial<const N: usize>(
+/// Represents a control board connected over serial
+#[derive(Debug)]
+pub struct SerialControlBoard {
+    inner: ControlBoard<WriteHalf<SerialStream>>,
+}
+
+impl Deref for SerialControlBoard {
+    type Target = ControlBoard<WriteHalf<SerialStream>>;
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl SerialControlBoard {
+    pub async fn new<const N: usize>(
         port_name: &str,
-        vehicle_defintion: &Definition<N>,
+        vehicle_defintion: Definition<N>,
     ) -> Result<Self> {
         const BAUD_RATE: u32 = 9600;
         const DATA_BITS: DataBits = DataBits::Eight;
@@ -167,7 +191,9 @@ impl ControlBoard<WriteHalf<SerialStream>> {
             .parity(PARITY)
             .stop_bits(STOP_BITS);
         let (comm_in, comm_out) = io::split(SerialStream::open(&port_builder)?);
-        Self::new(comm_out, comm_in, None, vehicle_defintion).await
+        Ok(Self {
+            inner: ControlBoard::new(comm_out, comm_in, None, vehicle_defintion).await?,
+        })
     }
 }
 
@@ -194,7 +220,7 @@ impl ControlBoard<WriteHalf<TcpStream>> {
 
         let stream = TcpStream::connect(host.to_string() + ":" + port).await?;
         let (comm_in, comm_out) = io::split(stream);
-        Self::new(comm_out, comm_in, None, &vehicle_defintion).await
+        Self::new(comm_out, comm_in, None, vehicle_defintion).await
     }
 }
 
@@ -473,7 +499,7 @@ impl<T: AsyncWrite + Unpin> ControlBoard<T> {
         }
     }
 
-    pub async fn reset(self) -> Result<()> {
+    pub async fn reset(&self) -> Result<()> {
         const RESET: [u8; 5] = *b"RESET";
 
         let mut message: Vec<_> = RESET.into();

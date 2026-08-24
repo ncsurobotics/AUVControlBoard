@@ -1,5 +1,5 @@
 use super::*;
-use crate::{vehicle::Definition, ControlBoard};
+use crate::{vehicle::Definition, SerialControlBoard};
 use serial_test::serial;
 
 use std::time::Duration;
@@ -30,7 +30,7 @@ const CB_PATH: &'static str = "/dev/serial/by-id/usb-STMicroelectronics_Control_
 #[tokio::test]
 #[serial]
 async fn connect_serial() {
-    let cb = ControlBoard::serial(CB_PATH, &VEHICLE_DEFINITION)
+    let cb = SerialControlBoard::new(CB_PATH, VEHICLE_DEFINITION)
         .await
         .unwrap();
     cb.reset().await.unwrap();
@@ -41,7 +41,7 @@ async fn connect_serial() {
 async fn motor_test() {
     const MOTOR_TEST_SPEED: f32 = 0.7;
     const MOTOR_TEST_TIME: u64 = 10;
-    let cb = ControlBoard::serial(CB_PATH, &VEHICLE_DEFINITION)
+    let cb = SerialControlBoard::new(CB_PATH, VEHICLE_DEFINITION)
         .await
         .unwrap();
     cb.raw_speed_set([MOTOR_TEST_SPEED; 8]).await.unwrap();

@@ -10,7 +10,7 @@ use serde_with::serde_as;
 pub type DofSpeeds = [f32; 6];
 
 /// Contains all parameters needed to describe a vehicle to the control board.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
 pub struct Definition<const MATRIX_ROWS: usize> {
     pub(crate) motor_matrix: MotorMatrix<MATRIX_ROWS>,
     pub(crate) dof_speeds: DofSpeeds,
@@ -32,7 +32,7 @@ impl<const MATRIX_ROWS: usize> Definition<MATRIX_ROWS> {
 }
 
 #[serde_as]
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
 #[serde(transparent)]
 pub struct MotorMatrix<const ROWS: usize> {
     #[serde_as(as = "[_; ROWS]")]
@@ -46,7 +46,7 @@ impl<const ROWS: usize> MotorMatrix<ROWS> {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
 pub struct MotorMatrixRow {
     pub(crate) x: f32,
     pub(crate) y: f32,
@@ -90,7 +90,7 @@ macro_rules! motor_matrix {
 
 pub type PidAxes = [PidAxis; 4];
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
 pub struct PidAxis {
     pub(crate) which: char,
     pub(crate) kp: f32,

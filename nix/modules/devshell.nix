@@ -11,6 +11,7 @@
         just
         nixd # Nix language server
         bacon
+        (python3.withPackages (pypkgs: with pypkgs; [ pyserial ]))
       ];
     };
   };

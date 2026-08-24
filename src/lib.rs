@@ -3,7 +3,7 @@
 //! # Example Usage:
 //!
 //! ```
-//! use auv_control_board::{ControlBoard, motor_matrix, pid_axes, vehicle::Definition};
+//! use auv_control_board::{SerialControlBoard, motor_matrix, pid_axes, vehicle::Definition};
 //! #[tokio::main]
 //! async fn main() {
 //!     const VEHICLE_DEFINITION: Definition<8> = Definition::new(
@@ -26,7 +26,7 @@
 //!         ],
 //!     );
 //!
-//!     let board = ControlBoard::serial("/dev/ttyACM0", &VEHICLE_DEFINITION).await;
+//!     let board = SerialControlBoard::new("/dev/serial/by-id/usb-STMicroelectronics_Control_Board_v2__Virtual_COM_Port__36313632303251010061003C-if00", VEHICLE_DEFINITION).await;
 //! }
 //! ```
 
