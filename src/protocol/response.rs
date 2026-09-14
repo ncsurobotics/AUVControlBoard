@@ -3,8 +3,9 @@ use bytes::BufMut;
 use tokio::io::AsyncReadExt;
 
 use super::util::{END_BYTE, ESCAPE_BYTE, START_BYTE};
-use tracing::{debug, warn};
+use tracing::{debug, instrument, warn};
 
+#[instrument(level = "trace", skip(buffer))]
 pub fn find_end(buffer: &[u8]) -> Option<(usize, &u8)> {
     let mut prev_escaped = false;
     buffer.iter().enumerate().skip(1).find(|(_, byte)| {
@@ -15,9 +16,9 @@ pub fn find_end(buffer: &[u8]) -> Option<(usize, &u8)> {
 }
 
 /// Returns adjust end_idx
+#[instrument(level = "trace", skip(buffer))]
 pub fn check_start(buffer: &mut Vec<u8>, end_idx: usize) -> Option<usize> {
     // Adjust for starting without start byte (malformed comms)
-    // TODO: log feature for these events -- serious issues!!!
     match buffer
         .iter()
         .enumerate()
@@ -57,6 +58,7 @@ pub fn check_start(buffer: &mut Vec<u8>, end_idx: usize) -> Option<usize> {
 }
 
 /// Discard start, end, and escape bytes
+#[instrument(level = "trace", skip(buffer), ret)]
 pub fn clean_message(buffer: &mut Vec<u8>, end_idx: usize) -> Vec<u8> {
     let message: Vec<u8> = buffer.drain(0..=end_idx).collect();
 
@@ -75,15 +77,14 @@ pub fn clean_message(buffer: &mut Vec<u8>, end_idx: usize) -> Vec<u8> {
 }
 
 /// Reads from serial resource, updating ack_map
+#[instrument(level = "trace", skip_all)]
 pub async fn get_messages<T>(buffer: &mut Vec<u8>, serial_conn: &mut T) -> Vec<Vec<u8>>
 where
     T: AsyncReadExt + Unpin + Send,
 {
     if serial_conn.read_buf(buffer).await.unwrap() != 0 {
         let mut messages = Vec::new();
-
-        // TODO: May need to clone
-        debug!("Message: {:#?}", buffer);
+        debug!(?buffer, "Received bytes");
 
         while let Some((end_idx, _)) = find_end(buffer) {
             if let Some(end_idx) = check_start(buffer, end_idx) {

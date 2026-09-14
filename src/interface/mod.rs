@@ -4,7 +4,7 @@
 //!
 //! [AUVControlBoard]: https://github.com/ncsurobotics/AUVControlBoard
 
-use core::fmt::{Debug, Display};
+use core::fmt::Debug;
 use std::{ops::Deref, sync::Arc, time::Duration};
 
 use tokio::{
@@ -14,7 +14,7 @@ use tokio::{
     time::{sleep, timeout},
 };
 use tokio_serial::{DataBits, Parity, SerialStream, StopBits};
-use tracing::warn;
+use tracing::{debug, instrument, warn, Instrument};
 
 use self::{
     response::ResponseMap,
@@ -29,24 +29,17 @@ pub mod util;
 pub mod vehicle;
 
 /// Status of the control board's sensors
-pub enum SensorStatuses {
-    /// IMU ready
-    ImuNr,
-    /// Depth sensor ready
-    DepthNr,
-    /// Sensors healthy
-    AllGood,
+#[derive(Debug)]
+pub struct SensorStatuses {
+    pub imu: SensorStatus,
+    pub depth: SensorStatus,
 }
 
-impl Display for SensorStatuses {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let msg = match self {
-            Self::ImuNr => "IMU not ready",
-            Self::DepthNr => "Depth sensor not ready",
-            Self::AllGood => "All good",
-        };
-        write!(f, "{msg}")
-    }
+/// Status of an individual control board sensor
+#[derive(Debug)]
+pub enum SensorStatus {
+    Ready,
+    NotReady,
 }
 
 /// The last yaw reported by the control board
@@ -70,6 +63,7 @@ impl<T: AsyncWriteExt + Unpin> Deref for ControlBoard<T> {
 }
 
 impl<T: 'static + AsyncWriteExt + Unpin + Send> ControlBoard<T> {
+    #[instrument(skip(comm_out, comm_in), err)]
     pub async fn new<U, const N: usize>(
         comm_out: T,
         comm_in: U,
@@ -107,21 +101,24 @@ impl<T: 'static + AsyncWriteExt + Unpin + Send> ControlBoard<T> {
 
         let inner_clone = this.inner.clone();
 
-        tokio::spawn(async move {
-            loop {
-                if (timeout(
-                    Duration::from_millis(100),
-                    Self::feed_watchdog(&inner_clone),
-                )
-                .await)
-                    .is_err()
-                {
-                    warn!("Watchdog ACK timed out.");
-                }
+        tokio::spawn(
+            async move {
+                loop {
+                    if (timeout(
+                        Duration::from_millis(100),
+                        Self::feed_watchdog(&inner_clone),
+                    )
+                    .await)
+                        .is_err()
+                    {
+                        warn!("Watchdog ACK timed out.");
+                    }
 
-                sleep(Duration::from_millis(200)).await;
+                    sleep(Duration::from_millis(200)).await;
+                }
             }
-        });
+            .in_current_span(),
+        );
 
         // Wait for watchdog to register
         while this.watchdog_status().await != Some(true) {
@@ -130,6 +127,7 @@ impl<T: 'static + AsyncWriteExt + Unpin + Send> ControlBoard<T> {
         Ok(this)
     }
 
+    #[instrument(skip(self), err)]
     async fn init_matrices<const N: usize>(&self, motor_matrix: &MotorMatrix<N>) -> Result<()> {
         for (i, row) in motor_matrix.rows.iter().enumerate() {
             self.motor_matrix_set(
@@ -147,6 +145,7 @@ impl<T: 'static + AsyncWriteExt + Unpin + Send> ControlBoard<T> {
         self.motor_matrix_update().await
     }
 
+    #[instrument(skip(self), err)]
     async fn stab_tune(&self, axes: &PidAxes) -> Result<()> {
         for axis in axes {
             self.stability_assist_pid_tune(
@@ -177,6 +176,7 @@ impl Deref for SerialControlBoard {
 }
 
 impl SerialControlBoard {
+    #[instrument(skip(vehicle_defintion), err)]
     pub async fn new<const N: usize>(
         port_name: &str,
         vehicle_defintion: Definition<N>,
@@ -197,10 +197,24 @@ impl SerialControlBoard {
     }
 }
 
-impl ControlBoard<WriteHalf<TcpStream>> {
+/// Represents a control board connected over tcp
+#[derive(Debug)]
+pub struct TcpControlBoard {
+    inner: ControlBoard<WriteHalf<TcpStream>>,
+}
+
+impl Deref for TcpControlBoard {
+    type Target = ControlBoard<WriteHalf<TcpStream>>;
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl TcpControlBoard {
     /// Both connections are necessary for the simulator to run,
     /// but the one that doesn't feed forward to control board is unnecessary
-    pub async fn tcp<const N: usize>(
+    #[instrument(err)]
+    pub async fn new<const N: usize>(
         host: &str,
         port: &str,
         dummy_port: String,
@@ -208,24 +222,31 @@ impl ControlBoard<WriteHalf<TcpStream>> {
     ) -> Result<Self> {
         let host = host.to_string();
         let host_clone = host.clone();
-        tokio::spawn(async move {
-            let _stream = TcpStream::connect(host_clone + ":" + &dummy_port)
-                .await
-                .unwrap();
-            // Have to avoid dropping the TCP stream
-            loop {
-                sleep(Duration::MAX).await
+        tokio::spawn(
+            async move {
+                let _stream = TcpStream::connect(host_clone + ":" + &dummy_port)
+                    .await
+                    .unwrap();
+                // Have to avoid dropping the TCP stream
+                loop {
+                    sleep(Duration::MAX).await
+                }
             }
-        });
+            .in_current_span(),
+        );
 
         let stream = TcpStream::connect(host.to_string() + ":" + port).await?;
         let (comm_in, comm_out) = io::split(stream);
-        Self::new(comm_out, comm_in, None, vehicle_defintion).await
+        Ok(TcpControlBoard {
+            inner: ControlBoard::new(comm_out, comm_in, None, vehicle_defintion).await?,
+        })
     }
 }
 
 impl<T: AsyncWrite + Unpin> ControlBoard<T> {
+    #[instrument(skip(control_board), err)]
     pub async fn feed_watchdog(control_board: &Arc<AUVControlBoard<T, ResponseMap>>) -> Result<()> {
+        debug!("Sending command");
         const WATCHDOG_FEED: [u8; 4] = *b"WDGF";
         let message = Vec::from(WATCHDOG_FEED);
         control_board.write_out_basic(message).await
@@ -233,6 +254,7 @@ impl<T: AsyncWrite + Unpin> ControlBoard<T> {
 
     /// <https://mb3hel.github.io/AUVControlBoard/user_guide/messages/#configuration-commands>
     #[allow(clippy::too_many_arguments)]
+    #[instrument(skip(self), err)]
     pub async fn motor_matrix_set(
         &self,
         thruster: u8,
@@ -243,6 +265,7 @@ impl<T: AsyncWrite + Unpin> ControlBoard<T> {
         roll: f32,
         yaw: f32,
     ) -> Result<()> {
+        debug!("Sending command");
         const MOTOR_MATRIX_SET: [u8; 5] = *b"MMATS";
         // Oversized to avoid reallocations
         let mut message: Vec<u8> = Vec::with_capacity(32 * 8);
@@ -260,7 +283,9 @@ impl<T: AsyncWrite + Unpin> ControlBoard<T> {
         self.write_out_basic(message).await
     }
 
+    #[instrument(skip(self), err)]
     pub async fn motor_matrix_update(&self) -> Result<()> {
+        debug!("Sending command");
         const MOTOR_MATRIX_UPDATE: [u8; 5] = *b"MMATU";
         self.write_out_basic(Vec::from(MOTOR_MATRIX_UPDATE)).await
     }
@@ -269,10 +294,12 @@ impl<T: AsyncWrite + Unpin> ControlBoard<T> {
     ///
     /// # Arguments:
     /// * `inversions` - Array of invert statuses, with motor 1 at index 0
+    #[instrument(skip(self), err)]
     pub async fn thruster_inversion_set<const N: usize>(
         &self,
         motor_matrix: &MotorMatrix<N>,
     ) -> Result<()> {
+        debug!("Sending command");
         const THRUSTER_INVERSION_SET: [u8; 4] = *b"TINV";
         let mut message = Vec::from(THRUSTER_INVERSION_SET);
 
@@ -288,6 +315,7 @@ impl<T: AsyncWrite + Unpin> ControlBoard<T> {
         self.write_out_basic(message).await
     }
 
+    #[instrument(skip(self), err)]
     pub async fn relative_dof_speed_set(
         &self,
         x: f32,
@@ -301,7 +329,9 @@ impl<T: AsyncWrite + Unpin> ControlBoard<T> {
             .await
     }
 
+    #[instrument(skip(self), err)]
     pub async fn relative_dof_speed_set_batch(&self, values: &[f32; 6]) -> Result<()> {
+        debug!("Sending command");
         const DOF_SET: [u8; 6] = *b"RELDOF";
         // Oversized to avoid reallocations
         let mut message = Vec::with_capacity(32 * 8);
@@ -314,7 +344,9 @@ impl<T: AsyncWrite + Unpin> ControlBoard<T> {
         self.write_out_basic(message).await
     }
 
+    #[instrument(skip(self), err)]
     pub async fn raw_speed_set(&self, speeds: [f32; 8]) -> Result<()> {
+        debug!("Sending command");
         const RAW_SET: [u8; 3] = *b"RAW";
         // Oversized to avoid reallocations
         let mut message = Vec::with_capacity(32 * 8);
@@ -327,6 +359,7 @@ impl<T: AsyncWrite + Unpin> ControlBoard<T> {
         self.write_out_basic(message).await
     }
 
+    #[instrument(skip(self), err)]
     pub async fn global_speed_set(
         &self,
         x: f32,
@@ -336,6 +369,7 @@ impl<T: AsyncWrite + Unpin> ControlBoard<T> {
         roll_speed: f32,
         yaw_speed: f32,
     ) -> Result<()> {
+        debug!("Sending command");
         const GLOBAL_SET: [u8; 6] = *b"GLOBAL";
         // Oversized to avoid reallocations
         let mut message = Vec::with_capacity(32 * 8);
@@ -348,6 +382,7 @@ impl<T: AsyncWrite + Unpin> ControlBoard<T> {
         self.write_out_basic(message).await
     }
 
+    #[instrument(skip(self), err)]
     pub async fn stability_2_speed_set(
         &self,
         x: f32,
@@ -357,6 +392,7 @@ impl<T: AsyncWrite + Unpin> ControlBoard<T> {
         target_yaw: f32,
         target_depth: f32,
     ) -> Result<()> {
+        debug!("Sending command");
         const SASSIST_2: [u8; 8] = *b"SASSIST2";
         // Oversized to avoid reallocations
         let mut message = Vec::with_capacity(32 * 8);
@@ -370,7 +406,9 @@ impl<T: AsyncWrite + Unpin> ControlBoard<T> {
         self.write_out_basic(message).await
     }
 
+    #[instrument(skip(self), err)]
     pub async fn set_initial_angle(&self) -> Result<()> {
+        debug!("Capturing initial angles");
         *self.initial_angles.lock().await = match self.responses().get_angles().await {
             Some(angle) => Some(angle),
             None => {
@@ -386,6 +424,7 @@ impl<T: AsyncWrite + Unpin> ControlBoard<T> {
         Ok(())
     }
 
+    #[instrument(skip(self), err)]
     pub async fn stability_2_speed_set_initial_yaw(
         &self,
         x: f32,
@@ -394,6 +433,7 @@ impl<T: AsyncWrite + Unpin> ControlBoard<T> {
         target_roll: f32,
         target_depth: f32,
     ) -> Result<()> {
+        debug!("Sending command");
         const SASSIST_2: [u8; 8] = *b"SASSIST2";
         // Oversized to avoid reallocations
         let mut message = Vec::with_capacity(32 * 8);
@@ -417,6 +457,7 @@ impl<T: AsyncWrite + Unpin> ControlBoard<T> {
         self.write_out_basic(message).await
     }
 
+    #[instrument(skip(self), err)]
     pub async fn stability_1_speed_set(
         &self,
         x: f32,
@@ -426,6 +467,7 @@ impl<T: AsyncWrite + Unpin> ControlBoard<T> {
         target_roll: f32,
         target_depth: f32,
     ) -> Result<()> {
+        debug!("Sending command");
         const SASSIST_1: [u8; 8] = *b"SASSIST1";
         // Oversized to avoid reallocations
         let mut message = Vec::with_capacity(32 * 8);
@@ -438,7 +480,9 @@ impl<T: AsyncWrite + Unpin> ControlBoard<T> {
         self.write_out_basic(message).await
     }
 
+    #[instrument(skip(self), err)]
     pub async fn bno055_imu_axis_config(&self, config: BNO055AxisConfig) -> Result<()> {
+        debug!("Sending command");
         const BNO055A_CONFIG: [u8; 7] = *b"BNO055A";
 
         let mut message = Vec::from(BNO055A_CONFIG);
@@ -447,7 +491,9 @@ impl<T: AsyncWrite + Unpin> ControlBoard<T> {
         self.write_out_basic(message).await
     }
 
+    #[instrument(skip(self), err)]
     pub async fn bno055_periodic_read(&self, enable: bool) -> Result<()> {
+        debug!("Sending command");
         const BNO055P: [u8; 7] = *b"BNO055P";
 
         let mut message = Vec::from(BNO055P);
@@ -458,6 +504,7 @@ impl<T: AsyncWrite + Unpin> ControlBoard<T> {
         Ok(())
     }
 
+    #[instrument(skip(self), err)]
     pub async fn stability_assist_pid_tune(
         &self,
         which: char,
@@ -467,6 +514,7 @@ impl<T: AsyncWrite + Unpin> ControlBoard<T> {
         limit: f32,
         invert: bool,
     ) -> Result<()> {
+        debug!("Sending command");
         const STAB_TUNE: [u8; 9] = *b"SASSISTTN";
         // Oversized to avoid reallocations
         let mut message = Vec::with_capacity(32 * 8);
@@ -485,21 +533,24 @@ impl<T: AsyncWrite + Unpin> ControlBoard<T> {
         self.write_out_basic(message).await
     }
 
+    #[instrument(skip(self), err)]
     pub async fn sensor_status_query(&self) -> Result<SensorStatuses> {
+        debug!("Sending command");
+        use SensorStatus::*;
         const STATUS: [u8; 5] = *b"SSTAT";
         let message = Vec::from(STATUS);
-        let status_resp = self.write_out(message).await;
-        let status_byte = status_resp.unwrap()[0];
-        if status_byte & 0x10 != 0x10 {
-            Ok(SensorStatuses::ImuNr)
-        } else if status_byte & 0x01 != 0x01 {
-            Ok(SensorStatuses::DepthNr)
-        } else {
-            Ok(SensorStatuses::AllGood)
-        }
+        let resp = self.write_out(message).await?;
+        let status = resp[0];
+        debug!("SSTAT is {status:#?}");
+        Ok(SensorStatuses {
+            imu: if status & 2 == 2 { Ready } else { NotReady },
+            depth: if status & 1 == 1 { Ready } else { NotReady },
+        })
     }
 
+    #[instrument(skip(self), err)]
     pub async fn reset(&self) -> Result<()> {
+        debug!("Sending command");
         const RESET: [u8; 5] = *b"RESET";
 
         let mut message: Vec<_> = RESET.into();
@@ -510,10 +561,12 @@ impl<T: AsyncWrite + Unpin> ControlBoard<T> {
         Ok(())
     }
 
+    #[instrument(level = "trace", skip(self), ret)]
     pub async fn watchdog_status(&self) -> Option<bool> {
         *self.responses().watchdog_status().read().await
     }
 
+    #[instrument(level = "trace", skip(self), ret)]
     pub async fn get_initial_angles(&self) -> Option<Angles> {
         *self.initial_angles.lock().await
     }

@@ -40,7 +40,7 @@ pub type Result<T, E = ControlBoardError> = core::result::Result<T, E>;
 
 /// See <https://cdn-shop.adafruit.com/datasheets/BST_BNO055_DS000_12.pdf>,
 /// page 25
-//[derive(Debug)]
+#[derive(Debug)]
 pub enum BNO055AxisConfig {
     P0,
     P1,

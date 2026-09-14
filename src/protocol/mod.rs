@@ -8,6 +8,7 @@ use core::fmt::Debug;
 use std::sync::Arc;
 
 use tokio::{io::AsyncWriteExt, sync::Mutex};
+use tracing::{debug, instrument};
 
 use crate::{
     interface::util::Result,
@@ -36,6 +37,7 @@ impl Default for MessageId {
 }
 
 impl MessageId {
+    #[instrument(level = "trace", skip(self), ret)]
     pub async fn get(&self) -> u16 {
         let mut id = self.id.lock().await;
         let ret = *id;
@@ -59,6 +61,7 @@ where
 }
 
 impl<T: AsyncWriteExt + Unpin, U: GetAck> AUVControlBoard<T, U> {
+    #[instrument(skip(comm_out, responses))]
     pub fn new(comm_out: Arc<Mutex<T>>, responses: U, msg_id: MessageId) -> Self {
         Self {
             comm_out,
@@ -73,6 +76,7 @@ impl<T: AsyncWriteExt + Unpin, U: GetAck> AUVControlBoard<T, U> {
 
     /// Adds protocol requirements (e.g. message id, escapes) to a message body
     /// Returns the id assigned to the message and the message
+    #[instrument(level = "trace", skip(self))]
     async fn add_metadata(&self, message: &[u8]) -> (u16, Vec<u8>) {
         let add_escape = |byte| {
             if [START_BYTE, END_BYTE, ESCAPE_BYTE].contains(&byte) {
@@ -108,25 +112,35 @@ impl<T: AsyncWriteExt + Unpin, U: GetAck> AUVControlBoard<T, U> {
 
     /// Writes out a message body and only gives acknowledge status
     /// Only for communications that return no data with acknowledge
+    #[instrument(skip(self, message_body), fields(id), err)]
     pub async fn write_out_basic(&self, message_body: Vec<u8>) -> Result<()> {
         let (id, message) = self.add_metadata(&message_body).await;
+        tracing::Span::current().record("id", id);
+        debug!(id, ?message, "Sending message");
         self.comm_out.lock().await.write_all(&message).await?;
         // Spec guarantees empty response
         self.responses.get_ack(id).await?;
+        debug!(id, "Message acknowledged");
         Ok(())
     }
 
     /// Writes out a message body and only gives acknowledge status
     /// Only for communications that return no data with acknowledge
+    #[instrument(skip(self, message_body), fields(id), err)]
     pub async fn write_out(&self, message_body: Vec<u8>) -> Result<Vec<u8>> {
         let (id, message) = self.add_metadata(&message_body).await;
+        tracing::Span::current().record("id", id);
+        debug!(id, ?message, "Sending message");
         self.comm_out.lock().await.write_all(&message).await?;
         // Spec guarantees empty response
         Ok(self.responses.get_ack(id).await?)
     }
 
+    #[instrument(skip(self, message_body), fields(id), err)]
     pub async fn write_out_no_response(&self, message_body: Vec<u8>) -> Result<()> {
-        let (_, message) = self.add_metadata(&message_body).await;
+        let (id, message) = self.add_metadata(&message_body).await;
+        tracing::Span::current().record("id", id);
+        debug!(id, ?message, "Sending message");
         let mut comm_out = self.comm_out.lock().await;
         comm_out.write_all(&message).await?;
         comm_out.flush().await?;

@@ -16,7 +16,7 @@ use tokio::{
     sync::{Mutex, RwLock},
     time::sleep,
 };
-use tracing::info;
+use tracing::{debug, info, instrument, trace, warn, Instrument};
 
 use crate::{
     protocol::{response::get_messages, util::crc_itt16_false_bitmath, GetAck},
@@ -52,6 +52,7 @@ const DEFAULT_BUF_LEN: usize = 512;
 const MAP_POLL_SLEEP: Duration = Duration::from_millis(5);
 
 impl ResponseMap {
+    #[instrument(skip(read_connection))]
     pub async fn new<T>(read_connection: T) -> Self
     where
         T: 'static + AsyncReadExt + Unpin + Send,
@@ -68,23 +69,26 @@ impl ResponseMap {
         let bno055_status_clone = bno055_status.clone();
         let ms5837_status_clone = ms5837_status.clone();
 
-        tokio::spawn(async move {
-            let mut buffer = Vec::with_capacity(DEFAULT_BUF_LEN);
-            let mut serial_conn = read_connection;
+        tokio::spawn(
+            async move {
+                let mut buffer = Vec::with_capacity(DEFAULT_BUF_LEN);
+                let mut serial_conn = read_connection;
 
-            while rx.try_recv() != Err(TryRecvError::Disconnected) {
-                Self::update_maps(
-                    &mut buffer,
-                    &mut serial_conn,
-                    &ack_map_clone,
-                    &watchdog_status_clone,
-                    &bno055_status_clone,
-                    &ms5837_status_clone,
-                    &mut stderr(),
-                )
-                .await;
+                while rx.try_recv() != Err(TryRecvError::Disconnected) {
+                    Self::update_maps(
+                        &mut buffer,
+                        &mut serial_conn,
+                        &ack_map_clone,
+                        &watchdog_status_clone,
+                        &bno055_status_clone,
+                        &ms5837_status_clone,
+                        &mut stderr(),
+                    )
+                    .await;
+                }
             }
-        });
+            .in_current_span(),
+        );
 
         Self {
             ack_map,
@@ -96,6 +100,7 @@ impl ResponseMap {
     }
 
     /// Reads from serial resource, updating ack_map
+    #[instrument(level = "trace", skip_all)]
     pub async fn update_maps<T, U>(
         buffer: &mut Vec<u8>,
         serial_conn: &mut T,
@@ -119,15 +124,18 @@ impl ResponseMap {
             if given_crc == calculated_crc {
                 if message_body.get(0..3) == Some(&ACK) {
                     let id = u16::from_be_bytes(message_body[3..=4].try_into().unwrap());
+                    debug!(id, ?message_body, "Received ACK");
                     let error_code: u8 = message_body[5];
 
                     let val = if error_code == 0 {
                         Ok(message_body[6..].to_vec())
                     } else {
+                        warn!(id, error_code, "Command rejected by control board");
                         Err(AcknowledgeErr::from(error_code))
                     };
                     ack_map.lock().await.insert(id, val);
                 } else if message_body.get(0..4) == Some(&WDGS) {
+                    debug!(id, enabled = (message_body[4] != 0), "Received watchdog status");
                     *watchdog_status.write().await = Some(message_body[4] != 0);
                 } else if message_body.get(0..7) == Some(&BNO055D) {
                     static mut PREV_YAW_PRINT: SystemTime = SystemTime::UNIX_EPOCH;
@@ -141,13 +149,17 @@ impl ResponseMap {
                         PREV_YAW_PRINT = SystemTime::now();
                         }
                     }
+                    trace!(id, ?new_status, "Received IMU data");
                     *bno055_status.write().await = Some(new_status);
                 } else if message_body.get(0..7) == Some(&MS5837D) {
+                    trace!(id, data = ?&message_body[7..], "Received depth sensor data");
                     *ms5837_status.write().await = Some(message_body[7..].try_into().unwrap());
                 } else {
+                    warn!(id, ?payload, "Unknown message");
                     write_stream_mutexed!(err_stream, format!("Unknown message (id: {id}) {:?}\n", payload));
                 }
             } else {
+                warn!(id, given_crc, calculated_crc, ?payload, "Message CRC mismatch");
                 write_stream_mutexed!(err_stream,
                 format!(
                 "Given CRC ({given_crc} {:?}) != calculated CRC ({calculated_crc} {:?}) for message (id: {id}) {:?} (0x{})\n",
@@ -160,15 +172,18 @@ impl ResponseMap {
         }).await
     }
 
+    #[instrument(level = "trace", skip(self), ret)]
     pub async fn get_angles(&self) -> Option<Angles> {
         (*self.bno055_status.read().await).map(Angles::from_raw)
     }
 }
 
 impl GetAck for ResponseMap {
+    #[instrument(level = "debug", skip(self), err)]
     async fn get_ack(&self, id: u16) -> Result<Vec<u8>, AcknowledgeErr> {
         loop {
             if let Some(x) = self.ack_map.lock().await.remove(&id) {
+                debug!(response = ?x, "Received command acknowledgement");
                 return x;
             }
             sleep(MAP_POLL_SLEEP).await; // Allow for new data from serial
